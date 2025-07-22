@@ -1,0 +1,7 @@
+gymnasium>=1.0.0
+pettingzoo>=1.24.0
+supersuit>=3.8.0
+pygame>=2.5
+numpy
+jax[cpu]>=0.4.25
+cvxpy>=1.4

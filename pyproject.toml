@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+
+[project]
+name = "lane_free_cav"
+version = "0.1.0"
+dependencies = [
+  "gymnasium>=1.0.0",
+  "pettingzoo>=1.24.0",
+  "supersuit>=3.8.0",
+  "pygame>=2.5",
+  "numpy",
+  "jax[cpu]>=0.4.25",          # only if you enable CBFs
+  "cvxpy>=1.4"                #  ''   ''   ''   ''
+]

@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: lane_free_cav
+Version: 0.1.0
+Requires-Dist: gymnasium>=1.0.0
+Requires-Dist: pettingzoo>=1.24.0
+Requires-Dist: supersuit>=3.8.0
+Requires-Dist: pygame>=2.5
+Requires-Dist: numpy
+Requires-Dist: jax[cpu]>=0.4.25
+Requires-Dist: cvxpy>=1.4
