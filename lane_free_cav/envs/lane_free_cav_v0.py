@@ -72,20 +72,57 @@ class LaneFreeCAVEnv(ParallelEnv):
         for a, act in actions.items():
             self._models[a].step(act)             # apply accel
 
-        # enforce road boundaries
-        for m in self._models.values():
-            # periodic boundary (longitudinal)
-            m.x = m.x % self.road_width
-            # hard boundary (lateral)
-            m.y = np.clip(m.y, 0, self.road_width)
-        # spacing calc & reward
+        agents_to_remove = set()
+        # Check for collisions between agents
+        agent_list = list(self.agents)
+        for i in range(len(agent_list)):
+            for j in range(i + 1, len(agent_list)):
+                a1 = agent_list[i]
+                a2 = agent_list[j]
+                dist = np.linalg.norm([self._models[a1].x - self._models[a2].x, self._models[a1].y - self._models[a2].y])
+                if dist < 5.0:  # Collision threshold
+                    agents_to_remove.add(a1)
+                    agents_to_remove.add(a2)
+
         for a in self.agents:
+            if a in agents_to_remove:
+                rew[a] = -10  # Penalty for crashing
+                done[a] = True
+                trunc[a] = False
+                obs[a] = self._get_obs(a, 0.0)
+                infos[a] = {'status': 'collided'}
+                continue
+
+            m = self._models[a]
+            # Check for hitting lateral boundary (any part of the agent)
+            half_width = m.width / 2
+            if not (m.y - half_width >= 0 and m.y + half_width <= self.road_width):
+                agents_to_remove.add(a)
+                rew[a] = -10  # Penalty for crashing
+                done[a] = True
+                trunc[a] = False
+                obs[a] = self._get_obs(a, 0.0)
+                infos[a] = {'status': 'crashed'}
+                continue
+
+            # Periodic boundary (longitudinal)
+            old_x = m.x
+            m.x %= self.road_width
+            if m.x < old_x:  # Agent has wrapped around
+                m.y = np.random.uniform(0, self.road_width)
+
+            # Spacing calc & reward for agents still alive
             min_d = self._min_distance(a)
             infos[a] = {"nearest_dist": min_d}
-            obs[a]   = self._get_obs(a, min_d)
-            rew[a]   = -1.0 if min_d < 1.0 else 0.1   # simple reward
-            done[a]  = term
-            trunc[a] = False
+            obs[a] = self._get_obs(a, min_d)
+            rew[a] = -1.0 if min_d < 1.0 else 0.1  # Simple reward
+            done[a] = term
+            trunc[a] = term
+
+        # Remove agents that have crashed or collided
+        for a in agents_to_remove:
+            if a in self.agents:
+                self.agents.remove(a)
         # safety override (optional)
         # self._apply_cbf(actions)
         if self.render_mode == "human":
