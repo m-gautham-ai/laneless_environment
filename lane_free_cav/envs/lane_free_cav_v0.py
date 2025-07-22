@@ -7,6 +7,16 @@ from lane_free_cav.wrappers.spacing_info import add_spacing_info
 import numpy as np
 import warnings
 
+
+# x: The agent's longitudinal position on the road.
+# y: The agent's lateral position on the road.
+# vx: The agent's longitudinal velocity.
+# vy: The agent's lateral velocity.
+# heading: The agent's heading angle.
+# length: The length of the agent's vehicle.
+# width: The width of the agent's vehicle.
+# min_d : The minimum distance to the nearest other vehicle.
+
 class LaneFreeCAVEnv(ParallelEnv):
     metadata = {
         "name": "lane_free_cav_v0",
