@@ -5,6 +5,7 @@ from .dynamics import VehicleModel
 from lane_free_cav.utils.renderer import Viewer
 from lane_free_cav.wrappers.spacing_info import add_spacing_info
 import numpy as np
+import warnings
 
 class LaneFreeCAVEnv(ParallelEnv):
     metadata = {
@@ -21,12 +22,15 @@ class LaneFreeCAVEnv(ParallelEnv):
         vehicle_types=None,
         max_cycles=1000,
         render_mode=None,
+        screen_scale=10, # pixels per meter
     ):
         super().__init__()
         self.dt = dt
         self.road_width = road_width
         self.max_cycles = max_cycles
         self.render_mode = render_mode
+        self.screen_scale = screen_scale
+        self.viewer = None
         # vehicle catalogue
         self.catalog = {
             "car": {"L": 4.7, "W": 1.8, "max_acc": 3.5},
@@ -40,11 +44,20 @@ class LaneFreeCAVEnv(ParallelEnv):
         # dynamics objects
         self._models = {a: VehicleModel(self.catalog[self.types[a]], dt) for a in self.agents}
         # spaces
-        obs_dim = 8  # [x,y,vx,vy, heading, size_x, size_y, min_dist]
-        self._obs_space = spaces.Box(-np.inf, np.inf, (obs_dim,), np.float32)
-        self._act_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)  # ax, ay
-        self.observation_spaces = {a: self._obs_space for a in self.agents}
-        self.action_spaces = {a: self._act_space for a in self.agents}
+        # Define observation and action spaces for a single agent
+        # obs: [x, y, vx, vy, heading, L, W, min_d]
+        obs_low = np.array([-1000, 0, -100, -100, -np.pi, 0, 0, 0], dtype=np.float32)
+        obs_high = np.array([1000, self.road_width, 100, 100, np.pi, 10, 5, 1000], dtype=np.float32)
+        self._single_observation_space = spaces.Box(obs_low, obs_high)
+        self._single_action_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
+
+        # Create spaces dictionary for all possible agents
+        self.observation_spaces = spaces.Dict(
+            {a: self._single_observation_space for a in self.possible_agents}
+        )
+        self.action_spaces = spaces.Dict(
+            {a: self._single_action_space for a in self.possible_agents}
+        )
         # GUI
         self.viewer = Viewer(road_width, render_mode) if render_mode else None
         # bookkeeping
@@ -56,7 +69,7 @@ class LaneFreeCAVEnv(ParallelEnv):
         self.agents = self.possible_agents[:]
         # random spawn
         for m in self._models.values():
-            m.reset(x=np.random.uniform(0, self.road_width),
+            m.reset(x=0.0,  # Always start from the left side
                     y=np.random.uniform(0, self.road_width),
                     vx=20.0, vy=0, heading=0)
         obs = {a: self._get_obs(a) for a in self.agents}
@@ -84,9 +97,16 @@ class LaneFreeCAVEnv(ParallelEnv):
                     agents_to_remove.add(a1)
                     agents_to_remove.add(a2)
 
+        # Rewards
+        # Reward for forward velocity, with a penalty for each step taken
+        step_penalty = 0.1
+        rewards = {a: (self._models[a].vx * self.dt) - step_penalty for a in self.agents}
+
+        # Boundary checks and wrap-around
+        agents_to_remove = set()
         for a in self.agents:
             if a in agents_to_remove:
-                rew[a] = -10  # Penalty for crashing
+                rewards[a] = -10.0 # Penalty for crashing
                 done[a] = True
                 trunc[a] = False
                 obs[a] = self._get_obs(a, 0.0)
@@ -94,11 +114,20 @@ class LaneFreeCAVEnv(ParallelEnv):
                 continue
 
             m = self._models[a]
-            # Check for hitting lateral boundary (any part of the agent)
-            half_width = m.width / 2
-            if not (m.y - half_width >= 0 and m.y + half_width <= self.road_width):
+            # Check for successful completion by reaching the right side
+            if m.x > self.road_width:
                 agents_to_remove.add(a)
-                rew[a] = -10  # Penalty for crashing
+                rewards[a] = 100.0  # Large reward for completion
+                done[a] = True
+                trunc[a] = False
+                obs[a] = self._get_obs(a, self._min_distance(a))
+                infos[a] = {'status': 'completed'}
+                continue
+
+            # Terminate if touching lateral boundaries (sand)
+            if m.y - m.width / 2 < 0 or m.y + m.width / 2 > self.road_width:
+                agents_to_remove.add(a)
+                rewards[a] = -10.0 # Penalty for going off-road
                 done[a] = True
                 trunc[a] = False
                 obs[a] = self._get_obs(a, 0.0)
@@ -115,7 +144,6 @@ class LaneFreeCAVEnv(ParallelEnv):
             min_d = self._min_distance(a)
             infos[a] = {"nearest_dist": min_d}
             obs[a] = self._get_obs(a, min_d)
-            rew[a] = -1.0 if min_d < 1.0 else 0.1  # Simple reward
             done[a] = term
             trunc[a] = term
 
@@ -129,20 +157,17 @@ class LaneFreeCAVEnv(ParallelEnv):
             self.render()
         if term:
             self.agents = []
-        return obs, rew, done, trunc, infos
+        return obs, rewards, done, trunc, infos
 
-    def _get_obs(self, agent, dist=None):
+    def _get_obs(self, agent, min_d=0.0):
         m = self._models[agent]
-        size = self.catalog[self.types[agent]]
         return np.array([m.x, m.y, m.vx, m.vy, m.heading,
-                         size["L"], size["W"],
-                         dist if dist is not None else self._min_distance(agent)],
-                         dtype=np.float32)
+                         m.length, m.width, min_d], dtype=np.float32)
 
     def _min_distance(self, agent):
         m = self._models[agent]
-        dists = [m.distance_to(self._models[o]) for o in self.agents if o != agent]
-        return min(dists) if dists else np.inf
+        dists = [np.linalg.norm([m.x-o.x, m.y-o.y]) for o in self._models.values() if o is not m]
+        return min(dists) if dists else 1000.0
 
     def render(self):
         if self.render_mode is None:
@@ -150,17 +175,12 @@ class LaneFreeCAVEnv(ParallelEnv):
             return
 
         if self.viewer is None:
-            self.viewer = Viewer(self.road_width, self.render_mode)
+            self.viewer = Viewer(self.road_width, self.render_mode, scale=self.screen_scale)
 
-        self.viewer.draw(self._models, self.types)
+        active_models = {a: self._models[a] for a in self.agents}
+        self.viewer.draw(active_models, self.types)
 
     def close(self):
         if self.viewer:
             self.viewer.close()
             self.viewer = None
-
-    def observation_space(self, agent):
-        return self._obs_space
-
-    def action_space(self, agent):
-        return self._act_space
