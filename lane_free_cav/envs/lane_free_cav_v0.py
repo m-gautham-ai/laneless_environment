@@ -71,6 +71,13 @@ class LaneFreeCAVEnv(ParallelEnv):
         # physics update
         for a, act in actions.items():
             self._models[a].step(act)             # apply accel
+
+        # enforce road boundaries
+        for m in self._models.values():
+            # periodic boundary (longitudinal)
+            m.x = m.x % self.road_width
+            # hard boundary (lateral)
+            m.y = np.clip(m.y, 0, self.road_width)
         # spacing calc & reward
         for a in self.agents:
             min_d = self._min_distance(a)
