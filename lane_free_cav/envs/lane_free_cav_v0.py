@@ -58,7 +58,7 @@ class LaneFreeCAVEnv(ParallelEnv):
         for m in self._models.values():
             m.reset(x=np.random.uniform(0, self.road_width),
                     y=np.random.uniform(0, self.road_width),
-                    vx=0, vy=0)
+                    vx=20.0, vy=0, heading=0)
         obs = {a: self._get_obs(a) for a in self.agents}
         info = {a: {} for a in self.agents}
         return obs, info

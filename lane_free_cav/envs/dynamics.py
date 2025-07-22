@@ -6,10 +6,10 @@ class VehicleModel:
         self.dt = dt
         self.reset(0, 0, 0, 0)
 
-    def reset(self, x, y, vx, vy):
+    def reset(self, x, y, vx, vy, heading=0.0):
         self.x, self.y = x, y
         self.vx, self.vy = vx, vy
-        self.heading = 0.0
+        self.heading = heading
 
     def step(self, accel):
         ax = np.clip(accel[0], -self.max_acc, self.max_acc)
